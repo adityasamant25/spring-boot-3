@@ -10,7 +10,6 @@ import org.postgresql.Driver;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Set;
 
 @Slf4j
 public class Boot3Application {
