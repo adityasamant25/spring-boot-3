@@ -5,8 +5,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.postgresql.Driver;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
 import java.sql.Statement;
@@ -23,7 +25,11 @@ public class Boot3Application {
         dataSource.setDriverClassName(Driver.class.getName());
         var template = new JdbcTemplate(dataSource);
         template.afterPropertiesSet();
-        var cs = new DefaultCustomerService(template);
+        var ptm = new DataSourceTransactionManager(dataSource);
+        ptm.afterPropertiesSet();
+        var tt = new TransactionTemplate(ptm);
+        tt.afterPropertiesSet();
+        var cs = new TransactionalCustomerService(template, tt);
 
         var aditya = cs.add("Aditya");
         var isha = cs.add("Isha");
@@ -35,14 +41,40 @@ public class Boot3Application {
 
 }
 
+class TransactionalCustomerService extends CustomerService {
+
+    private final TransactionTemplate tt;
+
+    TransactionalCustomerService(JdbcTemplate template, TransactionTemplate tt) {
+        super(template);
+        this.tt = tt;
+    }
+
+    @Override
+    Customer add(String name) {
+        return this.tt.execute(status-> super.add(name));
+
+    }
+
+    @Override
+    Customer byId(Integer id) {
+        return this.tt.execute(status -> super.byId(id));
+    }
+
+    @Override
+    Collection<Customer> all() {
+        return this.tt.execute(status -> super.all());
+    }
+}
+
 @Slf4j
-class DefaultCustomerService {
+class CustomerService {
 
     private final JdbcTemplate template;
     private final RowMapper<Customer> customerRowMapper = (resultSet, rowNum) -> new Customer(resultSet.getInt("id"), resultSet.getString("name"));
 
 
-    DefaultCustomerService(JdbcTemplate template) {
+    CustomerService(JdbcTemplate template) {
 
         this.template = template;
     }
@@ -51,8 +83,11 @@ class DefaultCustomerService {
         var al = new ArrayList<Map<String, Object>>();
         al.add(Map.of("id", Long.class));
         var keyHolder = new GeneratedKeyHolder(al);
-        this.template.update(con -> {
-            var ps = con.prepareStatement("insert into customers (name) values(?)", Statement.RETURN_GENERATED_KEYS);
+        template.update(con -> {
+            var ps = con.prepareStatement("""
+                    insert into customers (name) values(?)
+                    on conflict on constraint customers_name_key do update set name = excluded.name
+                    """, Statement.RETURN_GENERATED_KEYS);
             ps.setString(1, name);
             return ps;
         }, keyHolder);
@@ -64,11 +99,13 @@ class DefaultCustomerService {
     }
 
     Customer byId(Integer id) {
-        return this.template.queryForObject("select id, name from customers where id = ?", this.customerRowMapper, id);
+        return template.queryForObject("select id, name from customers where id = ?", customerRowMapper, id);
+
     }
 
     Collection<Customer> all() {
-        return this.template.query("select id, name from customers", this.customerRowMapper);
+        return template.query("select id, name from customers", customerRowMapper);
+
     }
 
 }
