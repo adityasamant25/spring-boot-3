@@ -2,7 +2,9 @@ package letscode.boot3;
 
 
 import lombok.extern.slf4j.Slf4j;
+import org.aopalliance.intercept.MethodInterceptor;
 import org.postgresql.Driver;
+import org.springframework.aop.framework.ProxyFactoryBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -11,6 +13,7 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
+import java.lang.reflect.InvocationTargetException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -19,6 +22,26 @@ import java.util.Objects;
 
 @Slf4j
 public class Boot3Application {
+
+    private static DefaultCustomerService transactionalCustomerService(TransactionTemplate tt, DefaultCustomerService delegate) {
+
+        var pfb = new ProxyFactoryBean();
+        pfb.setTarget(delegate);
+        pfb.setProxyTargetClass(true);
+        pfb.addAdvice((MethodInterceptor) invocation -> {
+            var method = invocation.getMethod();
+            var args = invocation.getArguments();
+            return tt.execute(status -> {
+                try {
+                    return method.invoke(delegate, args);
+                } catch (IllegalAccessException | InvocationTargetException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+        });
+
+        return (DefaultCustomerService) pfb.getObject();
+    }
 
     public static void main(String[] args) {
         var dataSource = new DriverManagerDataSource("jdbc:postgresql://localhost/postgres", "postgres", "postgres");
@@ -29,8 +52,8 @@ public class Boot3Application {
         ptm.afterPropertiesSet();
         var tt = new TransactionTemplate(ptm);
         tt.afterPropertiesSet();
-        var cs = new TransactionalCustomerService(template, tt);
 
+        var cs = transactionalCustomerService(tt, new DefaultCustomerService(template));
         var aditya = cs.add("Aditya");
         var isha = cs.add("Isha");
 
@@ -41,45 +64,19 @@ public class Boot3Application {
 
 }
 
-class TransactionalCustomerService extends CustomerService {
-
-    private final TransactionTemplate tt;
-
-    TransactionalCustomerService(JdbcTemplate template, TransactionTemplate tt) {
-        super(template);
-        this.tt = tt;
-    }
-
-    @Override
-    Customer add(String name) {
-        return this.tt.execute(status-> super.add(name));
-
-    }
-
-    @Override
-    Customer byId(Integer id) {
-        return this.tt.execute(status -> super.byId(id));
-    }
-
-    @Override
-    Collection<Customer> all() {
-        return this.tt.execute(status -> super.all());
-    }
-}
-
 @Slf4j
-class CustomerService {
+class DefaultCustomerService {
 
     private final JdbcTemplate template;
     private final RowMapper<Customer> customerRowMapper = (resultSet, rowNum) -> new Customer(resultSet.getInt("id"), resultSet.getString("name"));
 
 
-    CustomerService(JdbcTemplate template) {
+    DefaultCustomerService(JdbcTemplate template) {
 
         this.template = template;
     }
 
-    Customer add(String name) {
+    public Customer add(String name) {
         var al = new ArrayList<Map<String, Object>>();
         al.add(Map.of("id", Long.class));
         var keyHolder = new GeneratedKeyHolder(al);
@@ -98,12 +95,12 @@ class CustomerService {
         return byId(number.intValue());
     }
 
-    Customer byId(Integer id) {
+    public Customer byId(Integer id) {
         return template.queryForObject("select id, name from customers where id = ?", customerRowMapper, id);
 
     }
 
-    Collection<Customer> all() {
+    public Collection<Customer> all() {
         return template.query("select id, name from customers", customerRowMapper);
 
     }
