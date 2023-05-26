@@ -5,6 +5,7 @@
     <option name="originalFiles">
       <list>
         <option value="$PROJECT_DIR$/boot3/pom.xml" />
+        <option value="$PROJECT_DIR$/content-calendar/pom.xml" />
       </list>
     </option>
   </component>
