@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1,
+    "title": "My First Blog Post",
+    "desc": "My first blog post",
+    "status": "IDEA",
+    "contentType": "ARTICLE",
+    "dateCreated": "2023-05-26T18:33:05.157333",
+    "dateUpdated": null,
+    "url": ""
+  }
+]
