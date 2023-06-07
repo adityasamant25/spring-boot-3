@@ -5,14 +5,19 @@ import lombok.extern.slf4j.Slf4j;
 import org.aopalliance.intercept.MethodInterceptor;
 import org.postgresql.Driver;
 import org.springframework.aop.framework.ProxyFactoryBean;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
+import javax.sql.DataSource;
 import java.lang.reflect.InvocationTargetException;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -23,7 +28,30 @@ import java.util.Objects;
 @Slf4j
 public class Boot3Application {
 
-    private static DefaultCustomerService transactionalCustomerService(TransactionTemplate tt, DefaultCustomerService delegate) {
+
+    public static void main(String[] args) {
+
+        var applicationContext = new AnnotationConfigApplicationContext();
+        applicationContext.register(DataConfiguration.class);
+        applicationContext.refresh();
+        applicationContext.start();
+
+        var cs = applicationContext.getBean(CustomerService.class);
+
+        var aditya = cs.add("Aditya");
+        var isha = cs.add("Isha");
+
+        var all = cs.all();
+        Assert.state(all.contains(aditya) && all.contains(isha), "We didn't add Aditya and Isha successfully");
+        all.forEach(c -> log.info(c.toString()));
+    }
+
+}
+
+@Configuration
+class DataConfiguration {
+
+    private static CustomerService transactionalCustomerService(TransactionTemplate tt, CustomerService delegate) {
 
         var pfb = new ProxyFactoryBean();
         pfb.setTarget(delegate);
@@ -40,38 +68,45 @@ public class Boot3Application {
             });
         });
 
-        return (DefaultCustomerService) pfb.getObject();
+        return (CustomerService) pfb.getObject();
     }
 
-    public static void main(String[] args) {
+    @Bean
+    CustomerService defaultCustomerService(TransactionTemplate transactionTemplate, JdbcTemplate jdbcTemplate) {
+        return transactionalCustomerService(transactionTemplate, new CustomerService(jdbcTemplate));
+    }
+
+    @Bean
+    TransactionTemplate transactionTemplate(PlatformTransactionManager ptm) {
+        return new TransactionTemplate(ptm);
+    }
+
+    @Bean
+    DataSourceTransactionManager dataSourceTransactionManager(DataSource dataSource) {
+        return new DataSourceTransactionManager(dataSource);
+    }
+
+    @Bean
+    JdbcTemplate jdbcTemplate(DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
+    }
+
+    @Bean
+    DriverManagerDataSource dataSource() {
         var dataSource = new DriverManagerDataSource("jdbc:postgresql://localhost/postgres", "postgres", "postgres");
         dataSource.setDriverClassName(Driver.class.getName());
-        var template = new JdbcTemplate(dataSource);
-        template.afterPropertiesSet();
-        var ptm = new DataSourceTransactionManager(dataSource);
-        ptm.afterPropertiesSet();
-        var tt = new TransactionTemplate(ptm);
-        tt.afterPropertiesSet();
-
-        var cs = transactionalCustomerService(tt, new DefaultCustomerService(template));
-        var aditya = cs.add("Aditya");
-        var isha = cs.add("Isha");
-
-        var all = cs.all();
-        Assert.state(all.contains(aditya) && all.contains(isha), "We didn't add Aditya and Isha successfully");
-        all.forEach(c -> log.info(c.toString()));
+        return dataSource;
     }
-
 }
 
 @Slf4j
-class DefaultCustomerService {
+class CustomerService {
 
     private final JdbcTemplate template;
     private final RowMapper<Customer> customerRowMapper = (resultSet, rowNum) -> new Customer(resultSet.getInt("id"), resultSet.getString("name"));
 
 
-    DefaultCustomerService(JdbcTemplate template) {
+    CustomerService(JdbcTemplate template) {
 
         this.template = template;
     }
